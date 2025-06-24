@@ -1,3 +1,7 @@
+"""
+Файл потерял свою актуальность и больше не используется
+"""
+
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
@@ -33,7 +37,7 @@ for container in containers:
 
     if district != "Район не найден":
         try:
-            # Получаем ID из родительского блока
+            # Ищем место в html коде, где указан ID объявления и суём в Json
             outer = container.find_element(By.XPATH, './ancestor::*[@data-marker="item"]')
             item_id = outer.get_attribute('data-item-id')
             if item_id:
@@ -44,7 +48,7 @@ for container in containers:
 driver.quit()
 
 # Сохраняем ID в файл JSON
-with open("ids.json", "w", encoding="utf-8") as f:
+with open("id_4k.json", "w", encoding="utf-8") as f:
     json.dump(ad_ids, f, ensure_ascii=False, indent=2)
 
-print(f"Найдено {len(ad_ids)} ID с районом. Сохранено в ids.json")
+print(f"Найдено {len(ad_ids)} ID с районом. Сохранено в id_4k.json")

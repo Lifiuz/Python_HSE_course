@@ -1,9 +1,11 @@
-import selenium
+import json
 from selenium import webdriver
 from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+print("Идёт парсинг объявлений для 3к-квартир")
 
 # Инициализация драйвера
 driver = webdriver.Chrome()
@@ -22,6 +24,8 @@ except:
 
 # Счётчик объявлений для цикла
 ad_counter = 0
+id_counter = 0
+avito_ad_id = []
 
 # Парсинг объявлений
 containers = driver.find_elements(By.CSS_SELECTOR, '[class^=iva-item-content]')
@@ -30,8 +34,7 @@ containers = driver.find_elements(By.CSS_SELECTOR, '[class^=iva-item-content]')
 file_3k = open ('output_scripts_parsing\parsing_output_3k.txt', 'w', encoding='utf-8')
 
 for container in containers:
-    ad_counter += 1
-    # Извлечение названия - заголовка
+    # Парсинг названия объявления
     try:
         title = container.find_element(By.CSS_SELECTOR, '[class^=iva-item-title]').text
     except:
@@ -78,15 +81,33 @@ for container in containers:
     except NoSuchElementException:
         date = "Дата не найдена"
 
-    print(f" Объявление-{ad_counter}:", file=file_3k)
-    print(f" {title}", file=file_3k)
-    print(f" Цена: {price} ₽", file=file_3k)
-    print(f" Адрес: {street} {house_number}", file=file_3k)
-    print(f" Район: {district}", file=file_3k)
-    print(f" Описание: {description}", file=file_3k)
-    print(f" Дата публикации: {date}", file=file_3k)
-    print("- " * 50, file=file_3k)
+    # Парсинг ID. Ищем место в html коде, где указан ID, пишем в json
+    try:
+        outer = container.find_element(By.XPATH, './ancestor::*[@data-marker="item"]')
+        item_id = outer.get_attribute('data-item-id')
+    except NoSuchElementException:
+        continue
+
+    if district != "Район не найден":
+        ad_counter += 1
+        print(f" Объявление-{ad_counter}:", file=file_3k)
+        print(f" {title}", file=file_3k)
+        print(f" Цена: {price} ₽", file=file_3k)
+        print(f" Адрес: {street} {house_number}", file=file_3k)
+        print(f" Район: {district}", file=file_3k)
+        print(f" Описание: {description}", file=file_3k)
+        print(f" Дата публикации: {date}", file=file_3k)
+        print("- " * 50, file=file_3k)
+        if item_id:
+            id_counter += 1
+            avito_ad_id.append(item_id)
+
 
 driver.quit()
 file_3k.close()
 print(f"Закончил запись {ad_counter} объявлений в parsing_output_3k.txt")
+# Запись всех ID в JSON после завершения парсинга
+with open("id_3k.json", "w", encoding="utf-8") as f:
+    json.dump(avito_ad_id, f, ensure_ascii=False, indent=2)
+print(f"Закончил запись {id_counter} ID в id_3k.json")
+print("-"*50)

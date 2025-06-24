@@ -1,32 +1,34 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 import subprocess
 import os
+import json
+import threading
+import time
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
 # Токен бота
 TOKEN = '8087040319:AAEVnet_HuhgndKneYaTgsH0HOWFPB1FdOU'
 
-# Храним выбор пользователя (в реальных проектах — лучше использовать context.user_data)
+# Храним выбор пользователя и подписчиков
 user_choices = {}
+subscribers = {}
+last_known_ids = {}
 
-# Команда /start: приветствие и кнопка перехода в главное меню
+# Команда /start
+
 def start(update: Update, context: CallbackContext):
-    keyboard = [[InlineKeyboardButton("Начать поиск квартир", callback_data='main_menu')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    main_menu(update, context)
 
-    if update.message:
-        update.message.reply_text("Добро пожаловать!", reply_markup=reply_markup)
-    elif update.callback_query:
-        update.callback_query.edit_message_text("Добро пожаловать!", reply_markup=reply_markup)
+# Главное меню
 
-# Главное меню: выбор комнат и запуск поиска
 def main_menu(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    user_choices[user_id] = {'rooms': 1}  # значение по умолчанию — 1 комната
+    if user_id not in user_choices:
+        user_choices[user_id] = {'rooms': 1}
 
     text = (
         "Этот бот поможет вам снять квартиру в Перми\n\n"
-        "Как известно, самые лучше варианты на Авито быстро исчезают. Хорошие квартиры сдаются быстрее, чем вы о них узнаёте. "
+        "Как известно, самые лучшие варианты на Авито быстро исчезают. Хорошие квартиры сдаются быстрее, чем вы о них узнаёте. "
         "Но теперь вы можете оформить подписку и получать уведомления, когда на Авито появляются новые объявления"
         "Достаточно просто выбрать количество комнат, которое вам нужно и нажать оформить подписку\n\n"
         "Также вы можете прямо в боте посмотреть новые объявления. Для этого выберите количество комнат и нажмите начать поиск\n"
@@ -46,103 +48,116 @@ def main_menu(update: Update, context: CallbackContext):
     )
     keyboard = [
         [InlineKeyboardButton("Выбрать количество комнат", callback_data='select_rooms')],
-        [InlineKeyboardButton("Создать подписку на новые объявления", callback_data='create_subscription')],
+        [InlineKeyboardButton("Создать подписку", callback_data='create_subscription')],
         [InlineKeyboardButton("Отменить подписку", callback_data='cancel_subscription')],
-        [InlineKeyboardButton("Начать поиск квартир", callback_data='start_search')]
+        [InlineKeyboardButton("Начать поиск", callback_data='start_search')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    update.callback_query.edit_message_text(text, reply_markup=reply_markup)
 
-# Меню выбора количества комнат
+    if update.message:
+        update.message.reply_text(text, reply_markup=reply_markup)
+    elif update.callback_query:
+        update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+
+# Выбор комнат
+
 def select_rooms(update: Update, context: CallbackContext):
-    text = (
-        "Выберите, какие квартиры вам интересны?\n"
-    )
+    text = "Выберите, сколько комнат должно быть в квартире."
     keyboard = [
         [InlineKeyboardButton("1 - комнатная + студии", callback_data='room_1')],
         [InlineKeyboardButton("2 - комнатная", callback_data='room_2')],
         [InlineKeyboardButton("3 - комнатная", callback_data='room_3')],
         [InlineKeyboardButton("4 - комнатная", callback_data='room_4')],
-        [InlineKeyboardButton("Назад", callback_data='back_to_main')]
+        [InlineKeyboardButton("Назад", callback_data='main_menu')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     update.callback_query.edit_message_text(text, reply_markup=reply_markup)
 
-# Устанавливает выбранное пользователем количество комнат и возвращает в главное меню
+# Сохраняем выбор комнат
+
 def set_rooms(update: Update, context: CallbackContext, rooms: int):
     user_id = update.effective_user.id
-    user_choices[user_id]['rooms'] = rooms
+    user_choices[user_id] = {'rooms': rooms}
     update.callback_query.answer(f"Вы выбрали {rooms}-комнатную квартиру")
     main_menu(update, context)
 
-# Запускает соответствующий скрипт и показывает результат парсинга
+# Старт поиска — читаем 40 строк (5 объявлений по 8 строк)
+
 def start_search(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    rooms = user_choices.setdefault(user_id, {'rooms': 1}).get('rooms', 1)
+    rooms = user_choices.get(user_id, {}).get('rooms', 1)
 
-    # Сопоставление количества комнат со скриптом и файлом результатов
-    script_map = {
-        1: ('script1.py', 'file1.txt'),
-        2: ('script2.py', 'file2.txt'),
-        3: ('script3.py', 'file3.txt'),
-        4: ('script4.py', 'file4.txt')
-    }
+    file_path = f'output_scripts_parsing/parsing_output_{rooms}k.txt'
+    id_path = f'id_{rooms}k.json'
 
-    script_name, result_file = script_map.get(rooms, ('script1.py', 'file1.txt'))
-    subprocess.run(['python', script_name])  # запуск скрипта
+    if not os.path.exists(file_path):
+        update.callback_query.edit_message_text("Файл с результатами не найден.")
+        return
 
-    # Проверяем наличие и читаем результат
-    if os.path.exists(result_file):
-        with open(result_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-            text = (
-                f"Вы выбрали {rooms}-комнатную квартиру."
-                "Парсинг завершился успешно."
-                "Ниже первые 5 объявлений. Напомню, что вывод отфильтрован по дате публикации.\n\n"
-                f"{content}"
-            )
-    else:
-        text = f"Вы выбрали {rooms}-комнатную квартиру."
+    with open(file_path, 'r', encoding='utf-8') as f:
+        lines = [line.strip() for line in f.readlines() if line.strip() != '']
 
+    with open(id_path, 'r', encoding='utf-8') as f:
+        id_list = json.load(f)
 
-# Обрабатывает все действия пользователя по callback_data
-def button_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    data = query.data
+    context.user_data['lines'] = lines
+    context.user_data['ids'] = id_list
+    context.user_data['index'] = 0
 
-    if data == 'main_menu':
-        main_menu(update, context)
-    elif data == 'select_rooms':
-        select_rooms(update, context)
-    elif data == 'room_1':
-        set_rooms(update, context, 1)
-    elif data == 'room_2':
-        set_rooms(update, context, 2)
-    elif data == 'room_3':
-        set_rooms(update, context, 3)
-    elif data == 'room_4':
-        set_rooms(update, context, 4)
-    elif data == 'start_search':
-        start_search(update, context)
-    elif data == 'create_subscription':
-        handle_subscription(update, context)
-    elif data == 'cancel_subscription':
-        handle_unsubscribe(update, context)
-    elif data == 'back_to_main':
-        main_menu(update, context)
+    show_ads(update, context)
+
+def show_ads(update: Update, context: CallbackContext, previous=False):
+    lines = context.user_data.get('lines', [])
+    ids = context.user_data.get('ids', [])
+    index = context.user_data.get('index', 0)
+
+    if previous:
+        index = max(0, index - 90)
+
+    output_lines = lines[index:index + 50]
+    ad_blocks = []
+    ad_id_index = index // 8
+
+    for i in range(0, len(output_lines), 8):
+        ad_text = '\n'.join(output_lines[i:i + 7])
+        link = f"https://avito.ru/{ids[ad_id_index]}" if ad_id_index < len(ids) else ""
+        ad_blocks.append(f"{ad_text}\n\n👉 <a href='{link}'>Ссылка на объявление</a>")
+        ad_id_index += 1
+
+    if not ad_blocks:
+        keyboard = [[InlineKeyboardButton("Главное меню", callback_data='main_menu')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        update.callback_query.edit_message_text("Объявления закончились.", reply_markup=reply_markup)
+        return
+
+    final_text = '\n\n'.join(ad_blocks)
+    if len(final_text) > 4000:
+        final_text = final_text[:3990] + "… (обрезано)"
+
+    buttons = []
+    if index > 0:
+        buttons.append(InlineKeyboardButton("Предыдущие", callback_data='show_previous'))
+    if index + 50 < len(lines):
+        buttons.append(InlineKeyboardButton("Следующие", callback_data='show_more'))
+    buttons.append(InlineKeyboardButton("Главное меню", callback_data='main_menu'))
+
+    context.user_data['index'] = index + 50
+    reply_markup = InlineKeyboardMarkup([buttons])
+
+    update.callback_query.edit_message_text(
+        text=final_text,
+        reply_markup=reply_markup,
+        parse_mode='HTML',
+        disable_web_page_preview=True
+    )
+
+# Подписка
 
 def handle_subscription(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    rooms = user_choices.setdefault(user_id, {'rooms': 1}).get('rooms', 1)
-    subscribers[user_id] = rooms  # добавляем в список подписчиков
-    context.bot.send_message(chat_id=user_id, text=f"Вы подписались на уведомления по {rooms}-комнатным квартирам. Проверка будет происходить каждые 10 минут.")
-
-
-import threading
-import time
-
-# Храним подписчиков: user_id -> rooms
-subscribers = {}
+    rooms = user_choices.get(user_id, {}).get('rooms', 1)
+    subscribers[user_id] = rooms
+    context.bot.send_message(chat_id=user_id, text=f"Вы подписались на уведомления по {rooms}-комнатным квартирам.")
 
 def handle_unsubscribe(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -152,38 +167,85 @@ def handle_unsubscribe(update: Update, context: CallbackContext):
     else:
         context.bot.send_message(chat_id=user_id, text="У вас не было активной подписки.")
 
+# Обработка кнопок
 
-# Фоновый цикл, проверяющий подписки каждые 10 минут
-def background_subscription_checker(bot):
+def button_handler(update: Update, context: CallbackContext):
+    data = update.callback_query.data
+    if data == 'main_menu':
+        main_menu(update, context)
+    elif data == 'select_rooms':
+        select_rooms(update, context)
+    elif data.startswith('room_'):
+        rooms = int(data.split('_')[1])
+        set_rooms(update, context, rooms)
+    elif data == 'start_search':
+        start_search(update, context)
+    elif data == 'show_more':
+        show_ads(update, context)
+    elif data == 'show_previous':
+        show_ads(update, context, previous=True)
+    elif data == 'create_subscription':
+        handle_subscription(update, context)
+    elif data == 'cancel_subscription':
+        handle_unsubscribe(update, context)
+
+# Фоновый парсинг каждые 10 минут, с задержкой старта в 3 минуты
+
+def run_parsing_scripts():
+    scripts = [
+        'Script_parsing_1k.py',
+        'Script_parsing_2k.py',
+        'Script_parsing_3k.py',
+        'Script_parsing_4k.py',
+    ]
+    for script in scripts:
+        try:
+            subprocess.run(['python', script], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Ошибка при выполнении {script}: {e}")
+
+    for rooms in [1, 2, 3, 4]:
+        try:
+            with open(f'id_{rooms}k.json', 'r', encoding='utf-8') as f:
+                ids = json.load(f)
+                last_known_ids[rooms] = ids[0] if ids else None
+        except Exception as e:
+            print(f"Ошибка при чтении id_{rooms}k.json: {e}")
+
+    for user_id, rooms in subscribers.items():
+        try:
+            with open(f'id_{rooms}k.json', 'r', encoding='utf-8') as f:
+                current_ids = json.load(f)
+                current_first = current_ids[0] if current_ids else None
+                if current_first and current_first != last_known_ids.get(rooms):
+                    context_bot.send_message(chat_id=user_id, text=f"🔔 Появились новые объявления по {rooms}-комнатным квартирам! Запустите поиск.")
+        except Exception as e:
+            print(f"Ошибка при проверке подписки пользователя {user_id}: {e}")
+
+# Поток фонового запуска
+
+def background_runner():
+    print("Ждём 3 минуты перед первым запуском парсинга...")
+    time.sleep(180)
     while True:
-        for user_id, rooms in subscribers.items():
-            script_map = {
-                1: 'script5.py',
-                2: 'script6.py',
-                3: 'script7.py',
-                4: 'script8.py'
-            }
-            script_name = script_map.get(rooms, 'script5.py')
+        print("Запуск парсинг-скриптов...")
+        run_parsing_scripts()
+        time.sleep(600)
 
-            try:
-                result = subprocess.check_output(['python', script_name], stderr=subprocess.STDOUT, text=True).strip().lower()
-                if result == 'true':
-                    bot.send_message(chat_id=user_id, text="По вашей подписке есть новые объявления! Скорее запускайте поиск")
-            except subprocess.CalledProcessError as e:
-                bot.send_message(chat_id=user_id, text="Ошибка в фоновом процессе подписки:" + e.output)
-        time.sleep(600)  # каждые 10 минут
+# Запуск бота
 
-# Запуск бота и регистрация обработчиков
 def main():
+    global context_bot
     updater = Updater(TOKEN, use_context=True)
+    context_bot = updater.bot
     dp = updater.dispatcher
 
-    dp.add_handler(CommandHandler('start', start))  # команда /start
-    dp.add_handler(CallbackQueryHandler(button_handler))  # кнопки
+    dp.add_handler(CommandHandler('start', start))
+    dp.add_handler(CallbackQueryHandler(button_handler))
 
     updater.start_polling()
     updater.idle()
 
 if __name__ == '__main__':
-    threading.Thread(target=lambda: background_subscription_checker(Updater(TOKEN, use_context=True).bot), daemon=True).start()
+    threading.Thread(target=background_runner, daemon=True).start()
     main()

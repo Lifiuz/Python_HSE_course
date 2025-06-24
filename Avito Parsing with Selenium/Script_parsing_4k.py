@@ -1,9 +1,11 @@
-import selenium
+import json
 from selenium import webdriver
 from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+print("Идёт парсинг объявлений для 4к-квартир")
 
 # Инициализация драйвера
 driver = webdriver.Chrome()
@@ -22,12 +24,14 @@ except:
 
 # Счётчик объявлений для цикла
 ad_counter = 0
+id_counter = 0
+avito_ad_id = []
 
 # Парсинг объявлений
 containers = driver.find_elements(By.CSS_SELECTOR, '[class^=iva-item-content]')
 
 #Просто открыли блокнот, куда будем выводить результат
-file_4k = open ('output_scripts_parsing\parsing_output_4k.txt', 'w', encoding='utf-8')
+file_4k = open ("output_scripts_parsing\parsing_output_4k.txt", "w", encoding="utf-8")
 
 for container in containers:
     # Извлечение названия - заголовка
@@ -76,8 +80,14 @@ for container in containers:
         date = container.find_element(By.CSS_SELECTOR, '.iva-item-dateInfoStep-AoWrh .styles-module-root-PY1ie').text
     except NoSuchElementException:
         date = "Дата не найдена"
+    # Ищем место в html коде, где указан ID объявления и суём в Json
+    try:
+        outer = container.find_element(By.XPATH, './ancestor::*[@data-marker="item"]')
+        item_id = outer.get_attribute('data-item-id')
+    except NoSuchElementException:
+        continue
 
-    # Только с 4к квартирами делаю такую проверку, чтобы не заносить в блокнот объявления из других городов
+    # Только с 3к и 4к квартирами делаю такую проверку, чтобы не заносить в блокнот объявления из других городов
     if district != "Район не найден":
         ad_counter += 1
         print(f" Объявление-{ad_counter}:", file=file_4k)
@@ -88,7 +98,16 @@ for container in containers:
         print(f" Описание: {description}", file=file_4k)
         print(f" Дата публикации: {date}", file=file_4k)
         print("- " * 50, file=file_4k)
+        if item_id:
+            id_counter += 1
+            avito_ad_id.append(item_id)
+
 
 driver.quit()
 file_4k.close()
 print(f"Закончил запись {ad_counter} объявлений в parsing_output_4k.txt")
+# Запись всех ID в JSON после завершения парсинга
+with open("id_4k.json", "w", encoding="utf-8") as f:
+    json.dump(avito_ad_id, f, ensure_ascii=False, indent=2)
+print(f"Закончил запись {id_counter} ID в id_4k.json")
+print("-"*50)
